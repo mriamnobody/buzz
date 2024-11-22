@@ -67,15 +67,27 @@ class FileTranscriberWidget(QWidget):
 
         layout = QVBoxLayout(self)
 
-        self.form_widget = FileTranscriptionFormWidget(
-            transcription_options=self.transcription_options,
-            file_transcription_options=self.file_transcription_options,
-            parent=self,
-        )
-        self.form_widget.openai_access_token_changed.connect(
-            self.openai_access_token_changed
-        )
+        self.settings.settings.beginGroup("file_transcriber")
+        always_use_settings = self.settings.settings.value("always_use_settings", False, type=bool)
+        self.settings.settings.endGroup()
 
+        if not always_use_settings:
+            # Show the form widget
+            self.form_widget = FileTranscriptionFormWidget(
+                transcription_options=self.transcription_options,
+                file_transcription_options=self.file_transcription_options,
+                parent=self,
+            )
+            self.form_widget.openai_access_token_changed.connect(
+                self.openai_access_token_changed
+            )
+            self.form_widget.always_use_settings_changed.connect(
+                self.on_always_use_settings_changed
+            )
+            layout.addWidget(self.form_widget)
+        else:
+            print("Skipping dialog based on user preference.")
+            
         self.run_button = QPushButton(_("Run"), self)
         self.run_button.setDefault(True)
         self.run_button.clicked.connect(self.on_click_run)
@@ -109,6 +121,12 @@ class FileTranscriberWidget(QWidget):
         )
         preferences.save(settings=self.settings.settings)
         self.settings.settings.endGroup()
+
+    def on_always_use_settings_changed(self, always_use: bool):
+        self.settings.settings.beginGroup("file_transcriber")
+        self.settings.settings.setValue("always_use_settings", always_use)
+        self.settings.settings.endGroup()
+
 
     def on_click_run(self):
         self.run_button.setDisabled(True)
