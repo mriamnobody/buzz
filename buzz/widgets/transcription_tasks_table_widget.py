@@ -32,6 +32,7 @@ class Column(enum.Enum):
     ID = 0
     ERROR_MESSAGE = auto()
     EXPORT_FORMATS = auto()
+    TITLE = auto() 
     FILE = auto()
     OUTPUT_FOLDER = auto()
     PROGRESS = auto()
@@ -82,8 +83,21 @@ def format_record_status_text(record: QSqlRecord) -> str:
 
 column_definitions = [
     ColDef(
+        id="title",
+        header=_("Title"),
+        column=Column.TITLE,
+        width=400,
+        delegate=RecordDelegate(
+            text_getter=lambda record: record.value("url")
+            if record.value("url") != ""
+            else os.path.basename(record.value("title"))
+        ),
+        hidden_toggleable=False,
+    ),
+
+    ColDef(
         id="file_name",
-        header=_("File Name / URL"),
+        header=_("File / URL"),
         column=Column.FILE,
         width=400,
         delegate=RecordDelegate(
