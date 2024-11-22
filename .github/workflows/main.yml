@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - temp-branch
     tags:
       - "*"
   pull_request:
