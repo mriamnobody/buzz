@@ -200,6 +200,7 @@ class FileTranscriptionTask:
     file_path: Optional[str] = None
     url: Optional[str] = None
     fraction_downloaded: float = 0.0
+    title: Optional[str] = None  # New field for file title
 
 
 class OutputFormat(enum.Enum):

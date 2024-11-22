@@ -18,6 +18,7 @@ from buzz.widgets.transcriber.transcription_options_group_box import (
 class FileTranscriptionFormWidget(QWidget):
     openai_access_token_changed = pyqtSignal(str)
     transcription_options_changed = pyqtSignal(tuple)
+    always_use_settings_changed = pyqtSignal(bool)
 
     def __init__(
         self,
@@ -65,6 +66,13 @@ class FileTranscriptionFormWidget(QWidget):
 
         file_transcription_layout.addRow(_("Export:"), export_format_layout)
 
+        self.always_use_settings_checkbox = QCheckBox(_("Always use these settings"))
+        self.always_use_settings_checkbox.setChecked(False) 
+        self.always_use_settings_checkbox.stateChanged.connect(
+            self.on_always_use_settings_changed
+        )
+        file_transcription_layout.addRow("", self.always_use_settings_checkbox)
+
         layout.addWidget(transcription_options_group_box)
         layout.addLayout(file_transcription_layout)
         self.setLayout(layout)
@@ -92,6 +100,10 @@ class FileTranscriptionFormWidget(QWidget):
         self.transcription_options_changed.emit(
             (self.transcription_options, self.file_transcription_options)
         )
+
+    def on_always_use_settings_changed(self, state: int):
+        always_use = state == Qt.CheckState.Checked.value
+        self.always_use_settings_changed.emit(always_use)
 
     def get_on_checkbox_state_changed_callback(self, output_format: OutputFormat):
         def on_checkbox_state_changed(state: int):

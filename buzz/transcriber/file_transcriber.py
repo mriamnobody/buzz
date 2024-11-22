@@ -51,7 +51,9 @@ class FileTranscriber(QObject):
 
             try:
                 logging.debug(f"Downloading audio file from URL: {self.transcription_task.url}")
-                ydl.download([self.transcription_task.url])
+                info_dict = ydl.extract_info(self.transcription_task.url, download=True)
+                video_title = info_dict.get("title", "Unknown Title")
+                logging.debug(f"Extracted video title: {video_title}")
             except Exception as exc:
                 logging.debug(f"Error downloading audio: {exc.msg}")
                 self.error.emit(exc.msg)
@@ -70,12 +72,14 @@ class FileTranscriber(QObject):
 
             result = subprocess.run(cmd, capture_output=True)
 
-            if len(result.stderr):
+            if result.returncode != 0 or len(result.stderr):
                 logging.warning(f"Error processing downloaded audio. Error: {result.stderr.decode()}")
-                raise Exception(f"Error processing downloaded audio: {result.stderr.decode()}")
+                self.error.emit(f"Error processing downloaded audio: {result.stderr.decode()}")
+                return
 
             self.transcription_task.file_path = wav_file
-            logging.debug(f"Downloaded audio to file: {self.transcription_task.file_path}")
+            self.transcription_task.video_title = video_title  # Store the title in the task
+            logging.debug(f"Downloaded and converted audio to file: {self.transcription_task.file_path}")
 
         try:
             segments = self.transcribe()
@@ -104,7 +108,7 @@ class FileTranscriber(QObject):
             write_output(
                 path=default_path, segments=segments, output_format=output_format
             )
-
+            
         if self.transcription_task.source == FileTranscriptionTask.Source.FOLDER_WATCH:
             shutil.move(
                 self.transcription_task.file_path,

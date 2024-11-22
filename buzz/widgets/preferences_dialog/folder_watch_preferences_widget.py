@@ -50,6 +50,11 @@ class FolderWatchPreferencesWidget(QWidget):
         output_folder_browse_button = QPushButton(_("Browse"))
         output_folder_browse_button.clicked.connect(self.on_click_browse_output_folder)
 
+        use_saved_preferences_checkbox = QCheckBox("Always use this Configuration")
+        use_saved_preferences_checkbox.setChecked(False)
+        use_saved_preferences_checkbox.stateChanged.connect()
+
+
         input_folder_row = QHBoxLayout()
         self.input_folder_line_edit = LineEdit(config.input_directory, self)
         self.input_folder_line_edit.setPlaceholderText("/path/to/input/folder")
