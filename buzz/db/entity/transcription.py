@@ -20,6 +20,7 @@ class Transcription(Entity):
     extract_speech: str | None = None
     language: str | None = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    title: str | None = None  # Added title field
     error_message: str | None = None
     file: str | None = None
     time_queued: str = datetime.datetime.now().isoformat()
@@ -44,7 +45,12 @@ class Transcription(Entity):
         output_format: OutputFormat,
         output_directory: str | None = None,
     ):
-        input_file_name = os.path.splitext(os.path.basename(self.file))[0]
+        # Use title if available, otherwise fallback to filename/url logic
+        input_file_name = (
+            self.title
+            if self.title
+            else os.path.splitext(os.path.basename(self.file or self.url or ""))[0]
+        )
 
         date_time_now = datetime.datetime.now().strftime("%d-%b-%Y %H-%M-%S")
 
@@ -60,5 +66,7 @@ class Transcription(Entity):
             + f".{output_format.value}"
         )
 
-        output_directory = output_directory or os.path.dirname(self.file)
+        output_directory = output_directory or (
+            os.path.dirname(self.file) if self.file else os.getcwd()
+        )
         return os.path.join(output_directory, output_file_name)
