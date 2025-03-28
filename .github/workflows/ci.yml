@@ -1,311 +1,133 @@
 ---
-name: CI
-on:
-  push:
-    branches:
-      - main
-    tags:
-      - "*"
-  pull_request:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-13
-          - os: macos-latest
-          - os: windows-latest
-          - os: ubuntu-20.04
-          - os: ubuntu-22.04
-          - os: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11.9"
-
-      - name: Install Poetry Action
-        uses: snok/install-poetry@v1.3.1
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/poetry.lock') }}
-
-      - name: Load cached Whisper models
-        id: cached-whisper-models
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/Library/Caches/Buzz
-            ~/.cache/whisper
-            ~/.cache/huggingface
-            ~/AppData/Local/Buzz/Buzz/Cache
-          key: whisper-models
-
-      - uses: AnimMouse/setup-ffmpeg@v1.2.0
-        id: setup-ffmpeg
-
-      - name: Test ffmpeg
-        run: ffmpeg -i ./testdata/audio-long.mp3 ./testdata/audio-long.wav
-
-      - name: Install dependencies
-        run: poetry install
-
-      - name: Install apt dependencies
-        run: |
-          sudo apt-get update
-          if [ "$(lsb_release -rs)" != "24.04" ]; then
-            sudo apt-get install libegl1-mesa
-          fi
-          sudo apt-get install libyaml-dev libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libxcb-cursor0 libportaudio2 gettext libpulse0 libgl1-mesa-dev
-        if: "startsWith(matrix.os, 'ubuntu-')"
-
-      - name: Test
-        run: |
-          poetry run make test
-        shell: bash
-
-      - name: Upload coverage reports to Codecov with GitHub Action
-        uses: codecov/codecov-action@v4
-        with:
-          flags: ${{ runner.os }}
-          token: ${{ secrets.CODECOV_TOKEN }}
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-13
-          - os: macos-latest
-          - os: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11.9"
-
-      - name: Install Poetry Action
-        uses: snok/install-poetry@v1.3.1
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/poetry.lock') }}
-
-      - uses: AnimMouse/setup-ffmpeg@v1.2.0
-        id: setup-ffmpeg
-
-      - name: Install dependencies
-        run: poetry install
-
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.0"  # Not needed with a .ruby-version file
-          bundler-cache: true  # runs 'bundle install' and caches installed gems automatically
-        if: "startsWith(matrix.os, 'ubuntu-')"
-
-      - name: Install apt dependencies
-        run: |
-          sudo apt-get update
-          if [ "$(lsb_release -rs)" != "24.04" ]; then
-            sudo apt-get install libegl1-mesa
-          fi
-          sudo apt-get install libyaml-dev libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-xinerama0 libxcb-shape0 libxcb-cursor0 libportaudio2 gettext libpulse0 libgl1-mesa-dev
-        if: "startsWith(matrix.os, 'ubuntu-')"
-
-      - name: Install FPM
-        run: gem install fpm
-        if: "startsWith(matrix.os, 'ubuntu-')"
-
-      - name: Bundle
-        run: |
-          if [ "$RUNNER_OS" == "macOS" ]; then
-
-            brew install create-dmg
-
-            # kill XProtect to prevent https://github.com/actions/runner-images/issues/7522
-            sudo pkill -9 XProtect >/dev/null || true;
-            while pgrep XProtect; do sleep 3; done;
-
-            # create variables
-            CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-            KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-            # import certificate and provisioning profile from secrets
-            echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-
-            # create temporary keychain
-            security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-            security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-            security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-            # import certificate to keychain
-            security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-            security list-keychain -d user -s $KEYCHAIN_PATH
-
-            # store notarytool credentials
-            xcrun notarytool store-credentials --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" notarytool --validate
-
-            poetry run make bundle_mac
-
-          elif [ "$RUNNER_OS" == "Windows" ]; then
-
+  name: CI
+  on:
+    push:
+      branches:
+        - main
+      tags:
+        - "*"
+    pull_request:
+  
+  concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+  
+  jobs:
+    test:
+      runs-on: windows-latest
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            submodules: recursive
+  
+        - uses: actions/setup-python@v5
+          with:
+            python-version: "3.11.9"
+  
+        - name: Install Poetry Action
+          uses: snok/install-poetry@v1.3.1
+          with:
+            virtualenvs-create: true
+            virtualenvs-in-project: true
+  
+        - name: Load cached venv
+          id: cached-poetry-dependencies
+          uses: actions/cache@v4
+          with:
+            path: .venv
+            key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/poetry.lock') }}
+  
+        - name: Load cached Whisper models
+          id: cached-whisper-models
+          uses: actions/cache@v4
+          with:
+            path: |
+              ~/AppData/Local/Buzz/Buzz/Cache
+            key: whisper-models
+  
+        - uses: AnimMouse/setup-ffmpeg@v1.2.0
+          id: setup-ffmpeg
+  
+        - name: Test ffmpeg
+          run: ffmpeg -i ./testdata/audio-long.mp3 ./testdata/audio-long.wav
+  
+        - name: Install dependencies
+          run: poetry install
+  
+        - name: Test
+          run: poetry run make test
+          shell: bash
+  
+        - name: Upload coverage reports to Codecov with GitHub Action
+          uses: codecov/codecov-action@v4
+          with:
+            flags: ${{ runner.os }}
+            token: ${{ secrets.CODECOV_TOKEN }}
+          env:
+            CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  
+    build:
+      runs-on: windows-latest
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            submodules: recursive
+  
+        - uses: actions/setup-python@v5
+          with:
+            python-version: "3.11.9"
+  
+        - name: Install Poetry Action
+          uses: snok/install-poetry@v1.3.1
+          with:
+            virtualenvs-create: true
+            virtualenvs-in-project: true
+  
+        - name: Load cached venv
+          id: cached-poetry-dependencies
+          uses: actions/cache@v4
+          with:
+            path: .venv
+            key: venv-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/poetry.lock') }}
+  
+        - uses: AnimMouse/setup-ffmpeg@v1.2.0
+          id: setup-ffmpeg
+  
+        - name: Install dependencies
+          run: poetry install
+  
+        - name: Bundle
+          run: |
             cp -r ./dll_backup ./buzz/
             poetry run make bundle_windows
-
-          fi
-        env:
-          BUZZ_CODESIGN_IDENTITY: ${{ secrets.BUZZ_CODESIGN_IDENTITY }}
-          BUZZ_KEYCHAIN_NOTARY_PROFILE: ${{ secrets.BUZZ_KEYCHAIN_NOTARY_PROFILE }}
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        shell: bash
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Buzz-${{ runner.os }}-${{ runner.arch }}
-          path: |
-            dist/Buzz*-windows.exe
-            dist/Buzz*-mac.dmg
-
-  build_wheels:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # macos-13 is an intel runner, macos-14 is apple silicon
-        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Copy Windows DLLs
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            cp -r ./dll_backup ./buzz/
-          fi
-        shell: bash
-
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.22.0
-        env:
-          CIBW_ARCHS_WINDOWS: "auto"
-          CIBW_ARCHS_MACOS: "universal2"
-          CIBW_ARCHS_LINUX: "auto"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cibw-wheels-${{ matrix.os }}
-          path: ./wheelhouse/*.whl
-
-  publish_pypi:
-    needs: [build_wheels, test]
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: cibw-*
-          path: dist
-          merge-multiple: true
-
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          verbose: true
-          password: ${{ secrets.PYPI_TOKEN }}
-
-  release:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-13
-          - os: macos-latest
-          - os: windows-latest
-    needs: [build, test]
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: Buzz-${{ runner.os }}-${{ runner.arch }}
-
-      - name: Rename .dmg files
-        if: runner.os == 'macOS'
-        run: |
-          for file in Buzz*.dmg; do
-            mv "$file" "${file%.dmg}-${{ runner.arch }}.dmg"
-          done
-
-      - name: Install Poetry Action
-        uses: snok/install-poetry@v1.3.1
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            Buzz*-unix.tar.gz
-            Buzz*-windows.exe
-            Buzz*-mac.dmg
-
-  deploy_brew_cask:
-    runs-on: macos-latest
-    needs: [release]
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install Poetry Action
-        uses: snok/install-poetry@v1.3.1
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-      - name: Upload to Brew
-        run: make upload_brew
-        env:
-          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_GITHUB_API_TOKEN }}
+          shell: bash
+  
+        - uses: actions/upload-artifact@v4
+          with:
+            name: Buzz-${{ runner.os }}-${{ runner.arch }}
+            path: dist/Buzz*-windows.exe
+            
+    release:
+      runs-on: windows-latest
+      needs: [build, test]
+      if: startsWith(github.ref, 'refs/tags/')
+      steps:
+        - uses: actions/checkout@v4
+          with:
+            submodules: recursive
+  
+        - uses: actions/download-artifact@v4
+          with:
+            name: Buzz-${{ runner.os }}-${{ runner.arch }}
+  
+        - name: Install Poetry Action
+          uses: snok/install-poetry@v1.3.1
+          with:
+            virtualenvs-create: true
+            virtualenvs-in-project: true
+  
+        - name: Release
+          uses: softprops/action-gh-release@v2
+          with:
+            files: dist/Buzz*-windows.exe
+  
