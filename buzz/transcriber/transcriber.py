@@ -189,6 +189,7 @@ class FileTranscriptionTask:
     # deprecated: use uid
     id: int = field(default_factory=lambda: randint(0, 100_000_000))
     uid: uuid.UUID = field(default_factory=uuid.uuid4)
+    title: Optional[str] = None  # Added field to store fetched title for URLs
     segments: List[Segment] = field(default_factory=list)
     status: Optional[Status] = None
     fraction_completed = 0.0
@@ -213,20 +214,24 @@ class Stopped(Exception):
     pass
 
 
-SUPPORTED_AUDIO_FORMATS = "Audio files (*.mp3 *.wav *.m4a *.ogg *.opus *.flac);;\
-Video files (*.mp4 *.webm *.ogm *.mov *.mkv *.avi *.wmv);;All files (*.*)"
+SUPPORTED_AUDIO_FORMATS = "Audio files (*.mp3 *.wav *.m4a *.ogg *.opus *.flac);;" \
+                          "Video files (*.mp4 *.webm *.ogm *.mov *.mkv *.avi *.wmv);;" \
+                          "All files (*.*)"
 
 
 def get_output_file_path(
-    file_path: str,
+    file_path: str,  # Note: this might be a URL for URL tasks before download
     task: Task,
     language: Optional[str],
     model: TranscriptionModel,
     output_format: OutputFormat,
     output_directory: str | None = None,
     export_file_name_template: str | None = None,
+    title: Optional[str] = None,  # Pass title explicitly if available
 ):
-    input_file_name = os.path.splitext(os.path.basename(file_path))[0]
+    # Use title if provided, otherwise derive from file_path/url
+    input_file_name = title if title else os.path.splitext(os.path.basename(file_path))[0]
+
     date_time_now = datetime.datetime.now().strftime("%d-%b-%Y %H-%M-%S")
 
     export_file_name_template = (
@@ -250,5 +255,11 @@ def get_output_file_path(
         + f".{output_format.value}"
     )
 
-    output_directory = output_directory or os.path.dirname(file_path)
+    # For URLs, output_directory needs a fallback if not specified, e.g., current dir
+    if output_directory is None:
+        try:
+            output_directory = os.path.dirname(file_path) if os.path.isfile(file_path) else os.getcwd()
+        except TypeError:  # Handle cases where file_path might be None initially for URL tasks
+            output_directory = os.getcwd()
+
     return os.path.join(output_directory, output_file_name)
