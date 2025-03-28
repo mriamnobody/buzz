@@ -32,21 +32,23 @@ from buzz.widgets.transcription_record import TranscriptionRecord
 
 class Column(enum.Enum):
     ID = 0
-    ERROR_MESSAGE = auto()
-    EXPORT_FORMATS = auto()
-    FILE = auto()
-    OUTPUT_FOLDER = auto()
-    PROGRESS = auto()
-    LANGUAGE = auto()
-    MODEL_TYPE = auto()
-    SOURCE = auto()
-    STATUS = auto()
-    TASK = auto()
-    TIME_ENDED = auto()
-    TIME_QUEUED = auto()
-    TIME_STARTED = auto()
-    URL = auto()
-    WHISPER_MODEL_SIZE = auto()
+    TITLE = 1  # Added title column index
+    ERROR_MESSAGE = enum.auto()
+    EXPORT_FORMATS = enum.auto()
+    FILE = enum.auto()
+    OUTPUT_FOLDER = enum.auto()
+    PROGRESS = enum.auto()
+    LANGUAGE = enum.auto()
+    MODEL_TYPE = enum.auto()
+    SOURCE = enum.auto()
+    STATUS = enum.auto()
+    TASK = enum.auto()
+    TIME_ENDED = enum.auto()
+    TIME_QUEUED = enum.auto()
+    TIME_STARTED = enum.auto()
+    URL = enum.auto()
+    WHISPER_MODEL_SIZE = enum.auto()
+    # Ensure new columns get correct auto() values, check database order
 
 
 @dataclass
@@ -66,12 +68,15 @@ def format_record_status_text(record: QSqlRecord) -> str:
             in_progress_label = _("In Progress")
             return f'{in_progress_label} ({record.value("progress") :.0%})'
         case FileTranscriptionTask.Status.COMPLETED:
-            status = _("Completed")
+            status_label = _("Completed")
             started_at = record.value("time_started")
             completed_at = record.value("time_ended")
             if started_at != "" and completed_at != "":
-                status += f" ({TranscriptionTasksTableWidget.format_timedelta(datetime.fromisoformat(completed_at) - datetime.fromisoformat(started_at))})"
-            return status
+                try:
+                    status_label += f" ({TranscriptionTasksTableWidget.format_timedelta(datetime.fromisoformat(completed_at) - datetime.fromisoformat(started_at))})"
+                except (ValueError, TypeError):
+                    pass
+            return status_label
         case FileTranscriptionTask.Status.FAILED:
             failed_label = _("Failed")
             return f'{failed_label} ({record.value("error_message")})'
@@ -82,18 +87,29 @@ def format_record_status_text(record: QSqlRecord) -> str:
         case _:
             return ""
 
+
 column_definitions = [
     ColDef(
         id="file_name",
-        header=_("File Name / URL"),
-        column=Column.FILE,
+        header=_("File Name"),
+        column=Column.TITLE,
         width=400,
         delegate=RecordDelegate(
-            text_getter=lambda record: record.value("url")
-            if record.value("url") != ""
-            else os.path.basename(record.value("file"))
+            text_getter=lambda record: record.value("title") or
+                                       (record.value("url") if record.value("url") else
+                                        os.path.basename(record.value("file", "")))
         ),
         hidden_toggleable=False,
+    ),
+    ColDef(
+        id="type",
+        header=_("Type"),
+        column=Column.SOURCE,
+        width=80,
+        delegate=RecordDelegate(
+            text_getter=lambda record: _("URL") if record.value("source") == FileTranscriptionTask.Source.URL_IMPORT.value else _("Local File")
+        ),
+        hidden_toggleable=True,
     ),
     ColDef(
         id="model",
@@ -107,7 +123,7 @@ column_definitions = [
     ColDef(
         id="task",
         header=_("Task"),
-        column=Column.SOURCE,
+        column=Column.TASK,
         width=120,
         delegate=RecordDelegate(
             text_getter=lambda record: TASK_LABEL_TRANSLATIONS[Task(record.value("task"))]
@@ -129,7 +145,7 @@ column_definitions = [
         delegate=RecordDelegate(
             text_getter=lambda record: datetime.fromisoformat(
                 record.value("time_queued")
-            ).strftime("%Y-%m-%d %H:%M:%S")
+            ).strftime("%Y-%m-%d %H:%M:%S") if record.value("time_queued") else ""
         ),
     ),
     ColDef(
@@ -140,12 +156,11 @@ column_definitions = [
         delegate=RecordDelegate(
             text_getter=lambda record: datetime.fromisoformat(
                 record.value("time_ended")
-            ).strftime("%Y-%m-%d %H:%M:%S")
-            if record.value("time_ended") != ""
-            else ""
+            ).strftime("%Y-%m-%d %H:%M:%S") if record.value("time_ended") != "" else ""
         ),
     ),
 ]
+
 
 class TranscriptionTasksTableHeaderView(QHeaderView):
     def __init__(self, orientation, parent=None):
@@ -170,6 +185,7 @@ class TranscriptionTasksTableHeaderView(QHeaderView):
         self.setSectionHidden(column_index, not checked)
         self.parent().save_column_visibility()
 
+
 class TranscriptionTasksTableWidget(QTableView):
     return_clicked = pyqtSignal()
 
@@ -190,9 +206,7 @@ class TranscriptionTasksTableWidget(QTableView):
 
         self.settings = Settings()
 
-        self.settings.begin_group(
-            Settings.Key.TRANSCRIPTION_TASKS_TABLE_COLUMN_VISIBILITY
-        )
+        self.settings.begin_group(Settings.Key.TRANSCRIPTION_TASKS_TABLE_COLUMN_VISIBILITY)
         for definition in column_definitions:
             self.model().setHeaderData(
                 definition.column.value,
@@ -202,7 +216,7 @@ class TranscriptionTasksTableWidget(QTableView):
 
             visible = True
             if definition.hidden_toggleable:
-                visible = self.settings.settings.value(definition.id, "true") in {"true", "True", True}
+                visible = self.settings.settings.value(definition.id, True, type=bool)
 
             self.setColumnHidden(definition.column.value, not visible)
             if definition.width is not None:
@@ -219,33 +233,44 @@ class TranscriptionTasksTableWidget(QTableView):
         self.verticalHeader().hide()
         self.setAlternatingRowColors(True)
 
-        # Show date added before date completed
-        self.horizontalHeader().swapSections(11, 12)
+        header = self.horizontalHeader()
+        try:
+            title_visual_index = header.visualIndex(Column.TITLE.value)
+            type_logical_index = Column.SOURCE.value
+            type_visual_index = header.visualIndex(type_logical_index)
 
-    def contextMenuEvent(self, event):
+            if title_visual_index != -1 and type_visual_index != -1 and type_visual_index != title_visual_index + 1:
+                header.moveSection(type_visual_index, title_visual_index + 1)
+        except Exception as e:
+            logging.warning(f"Error adjusting column order: {e}")
+
+    def contextMenuEvent(self, event: QtGui.QContextMenuEvent):
+        index = self.indexAt(event.pos())
+        if not index.isValid():
+            return
+
         menu = QMenu(self)
-        for definition in column_definitions:
-            if not definition.hidden_toggleable:
-                continue
-            action = menu.addAction(definition.header)
-            action.setCheckable(True)
-            action.setChecked(not self.isColumnHidden(definition.column.value))
-            action.toggled.connect(
-                lambda checked,
-                column_index=definition.column.value: self.on_column_checked(
-                    column_index, checked
-                )
-            )
+        record = self.model().record(index.row())
+
+        title = record.value(Column.TITLE.value)
+        source_val = record.value(Column.SOURCE.value)
+        is_url = source_val == FileTranscriptionTask.Source.URL_IMPORT.value
+        file_path = record.value(Column.FILE.value)
+        url = record.value(Column.URL.value)
+
+        copy_name_action_text = _("Copy Title") if is_url else _("Copy File Name")
+        copy_name_action = menu.addAction(copy_name_action_text)
+        copy_name_action.triggered.connect(lambda: QApplication.clipboard().setText(title or ""))
+
+        copy_source_action_text = _("Copy URL") if is_url else _("Copy File Path")
+        copy_source_action = menu.addAction(copy_source_action_text)
+        source_to_copy = url if is_url else file_path
+        copy_source_action.triggered.connect(lambda: QApplication.clipboard().setText(source_to_copy or ""))
+
         menu.exec(event.globalPos())
 
-    def on_column_checked(self, column_index: int, checked: bool):
-        self.setColumnHidden(column_index, not checked)
-        self.save_column_visibility()
-
     def save_column_visibility(self):
-        self.settings.begin_group(
-            Settings.Key.TRANSCRIPTION_TASKS_TABLE_COLUMN_VISIBILITY
-        )
+        self.settings.begin_group(Settings.Key.TRANSCRIPTION_TASKS_TABLE_COLUMN_VISIBILITY)
         for definition in column_definitions:
             self.settings.settings.setValue(
                 definition.id, not self.isColumnHidden(definition.column.value)
@@ -255,23 +280,20 @@ class TranscriptionTasksTableWidget(QTableView):
     def copy_selected_fields(self):
         selected_text = ""
         for row in self.selectionModel().selectedRows():
-            row_index = row.row()
-            file_name = self.model().data(self.model().index(row_index, 3))
-            url = self.model().data(self.model().index(row_index, 14))
-
-            selected_text += f"{file_name}{url}\n"
-
+            record = self.model().record(row.row())
+            title = record.value(Column.TITLE.value) or ""
+            source_val = record.value(Column.SOURCE.value)
+            type_str = _("URL") if source_val == FileTranscriptionTask.Source.URL_IMPORT.value else _("Local File")
+            selected_text += f"{title}\t{type_str}\n"
         selected_text = selected_text.rstrip("\n")
         QApplication.clipboard().setText(selected_text)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Return:
             self.return_clicked.emit()
-
         if event.matches(QKeySequence.StandardKey.Copy):
             self.copy_selected_fields()
             return
-
         super().keyPressEvent(event)
 
     def selected_transcriptions(self) -> List[Transcription]:
@@ -279,9 +301,14 @@ class TranscriptionTasksTableWidget(QTableView):
         return [self.transcription(row) for row in selected]
 
     def delete_transcriptions(self, rows: List[QModelIndex]):
-        for row in rows:
-            self.model().removeRow(row.row())
-        self.model().submitAll()
+        rows_to_delete = sorted([row.row() for row in rows], reverse=True)
+        for row_index in rows_to_delete:
+            self.model().removeRow(row_index)
+        success = self.model().submitAll()
+        if not success:
+            logging.error(f"Failed to delete rows: {self.model().lastError().text()}")
+            self.model().revertAll()
+        self.model().select()
 
     def transcription(self, index: QModelIndex) -> Transcription:
         return Transcription.from_record(self.model().record(index.row()))
@@ -290,11 +317,7 @@ class TranscriptionTasksTableWidget(QTableView):
         self.model().select()
 
     def refresh_row(self, id: UUID):
-        for i in range(self.model().rowCount()):
-            record = self.model().record(i)
-            if record.value("id") == str(id):
-                self.model().selectRow(i)
-                return
+        self.model().select()
 
     @staticmethod
     def format_timedelta(delta: timedelta):
