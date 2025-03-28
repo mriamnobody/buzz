@@ -13,14 +13,21 @@ def copy_transcriptions_from_json_to_sqlite(conn: Connection):
         tasks = cache.load()
         cursor = conn.cursor()
         for task in tasks:
+            # Determine title for older data being migrated
+            if task.url:
+                title = task.url  # Cannot fetch title retrospectively easily
+            else:
+                title = os.path.basename(task.file_path) if task.file_path else "Unknown"
+
             cursor.execute(
                 """
-                INSERT INTO transcription (id, error_message, export_formats, file, output_folder, progress, language, model_type, source, status, task, time_ended, time_queued, time_started, url, whisper_model_size, hugging_face_model_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, ?), ?, ?, ?, ?)
-                RETURNING id;
+                INSERT INTO transcription (id, title, error_message, export_formats, file, output_folder, progress, language, model_type, source, status, task, time_ended, time_queued, time_started, url, whisper_model_size, hugging_face_model_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, ?), ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING; -- Prevent duplicates if migration runs multiple times
                 """,
                 (
                     str(task.uid),
+                    title,  # Added title
                     task.error,
                     ", ".join(
                         [
@@ -37,7 +44,7 @@ def copy_transcriptions_from_json_to_sqlite(conn: Connection):
                     task.status.value,
                     task.transcription_options.task.value,
                     task.completed_at,
-                    task.queued_at, datetime.now().isoformat(),
+                    task.queued_at, datetime.now().isoformat(),  # time_queued, use now as fallback
                     task.started_at,
                     task.url,
                     task.transcription_options.model.whisper_model_size.value
@@ -48,23 +55,31 @@ def copy_transcriptions_from_json_to_sqlite(conn: Connection):
                     else None,
                 ),
             )
-            transcription_id = cursor.fetchone()[0]
 
-            for segment in task.segments:
-                cursor.execute(
-                    """
-                    INSERT INTO transcription_segment (end_time, start_time, text, translation, transcription_id)
-                    VALUES (?, ?, ?, ?, ?);
-                    """,
-                    (
-                        segment.end,
-                        segment.start,
-                        segment.text,
-                        segment.translation,
-                        transcription_id,
-                    ),
-                )
-        # os.remove(cache.tasks_list_file_path)
+            # Check if the insertion was successful before trying to insert segments
+            if cursor.rowcount > 0:
+                transcription_id = str(task.uid)  # Use the original task ID
+                for segment in task.segments:
+                    cursor.execute(
+                        """
+                        INSERT INTO transcription_segment (end_time, start_time, text, translation, transcription_id)
+                        VALUES (?, ?, ?, ?, ?);
+                        """,
+                        (
+                            segment.end,
+                            segment.start,
+                            segment.text,
+                            segment.translation,
+                            transcription_id,
+                        ),
+                    )
+        # Remove the old cache file after successful migration
+        os.remove(cache.tasks_list_file_path)
+        for task in tasks:  # remove individual task files too
+            task_file_path = cache.get_task_path(task_id=task.id)  # assuming task.id was the old key
+            if os.path.exists(task_file_path):
+                os.remove(task_file_path)
+
         conn.commit()
 
 
