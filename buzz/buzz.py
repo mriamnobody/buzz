@@ -5,19 +5,33 @@ import os
 import platform
 import sys
 from typing import TextIO
+import io
+import traceback
 
 from platformdirs import user_log_dir, user_cache_dir, user_data_dir
 
 from buzz.assets import APP_BASE_DIR
 
-# Check for segfaults if not running in frozen mode
-if getattr(sys, "frozen", False) is False:
-    faulthandler.enable()
+import io
+import traceback
 
-# Sets stderr to no-op TextIO when None (run as Windows GUI).
-# Resolves https://github.com/chidiwilliams/buzz/issues/221
-if sys.stderr is None:
-    sys.stderr = TextIO()
+def setup_crash_logging(log_dir: str):
+    if sys.stderr is None or isinstance(sys.stderr, io.TextIOBase) is False:
+        sys.stderr = open(os.path.join(log_dir, "stderr.log"), "w", buffering=1)
+
+    try:
+        faulthandler.enable(file=sys.stderr)
+    except Exception:
+        pass
+
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        logging.critical("Uncaught exception",
+                         exc_info=(exc_type, exc_value, exc_traceback))
+
+    sys.excepthook = handle_exception
 
 # Adds the current directory to the PATH, so the ffmpeg binary get picked up:
 # https://stackoverflow.com/a/44352931/9830227
