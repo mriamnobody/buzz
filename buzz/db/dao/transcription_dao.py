@@ -1,4 +1,5 @@
 import uuid
+import os
 from datetime import datetime
 from uuid import UUID
 
@@ -21,6 +22,7 @@ class TranscriptionDAO(DAO[Transcription]):
             """
             INSERT INTO transcription (
                 id,
+                title,  -- Added
                 export_formats,
                 file,
                 output_folder,
@@ -37,6 +39,7 @@ class TranscriptionDAO(DAO[Transcription]):
                 extract_speech
             ) VALUES (
                 :id,
+                :title,  -- Added
                 :export_formats,
                 :file,
                 :output_folder,
@@ -55,6 +58,14 @@ class TranscriptionDAO(DAO[Transcription]):
             """
         )
         query.bindValue(":id", str(task.uid))
+
+        # Set title based on source
+        if task.source == FileTranscriptionTask.Source.URL_IMPORT:
+            title = task.title if task.title else task.url
+        else:  # FILE_IMPORT or FOLDER_WATCH
+            title = os.path.basename(task.file_path) if task.file_path else "Unknown File"
+        query.bindValue(":title", title)
+
         query.bindValue(
             ":export_formats",
             ", ".join(
@@ -100,25 +111,40 @@ class TranscriptionDAO(DAO[Transcription]):
 
     def copy_transcription(self, id: UUID) -> UUID:
         query = self._create_query()
-        query.prepare("SELECT * FROM transcription WHERE id = :id")
+        # Select all columns explicitly to include the new 'title' column
+        query.prepare("""
+            SELECT id, title, export_formats, file, output_folder, language,
+            model_type, source, status, task, time_queued, url,
+            whisper_model_size, hugging_face_model_id, word_level_timings,
+            extract_speech, error_message, progress, time_ended, time_started
+            FROM transcription WHERE id = :id
+        """)
         query.bindValue(":id", str(id))
         if not query.exec():
             raise Exception(query.lastError().text())
         if not query.next():
             raise Exception("Transcription not found")
 
-        transcription_data = {field.name: query.value(field.name) for field in
-                              self.entity.__dataclass_fields__.values()}
+        transcription_data = {
+            field.name: query.value(field.name)
+            for field in self.entity.__dataclass_fields__.values()
+        }
 
         new_id = uuid.uuid4()
         transcription_data["id"] = str(new_id)
         transcription_data["time_queued"] = datetime.now().isoformat()
         transcription_data["status"] = FileTranscriptionTask.Status.QUEUED.value
+        # Reset progress and time fields for the new task
+        transcription_data["progress"] = 0.0
+        transcription_data["time_started"] = None
+        transcription_data["time_ended"] = None
+        transcription_data["error_message"] = None
 
         query.prepare(
             """
             INSERT INTO transcription (
                 id,
+                title,  -- Added
                 export_formats,
                 file,
                 output_folder,
@@ -132,9 +158,14 @@ class TranscriptionDAO(DAO[Transcription]):
                 whisper_model_size,
                 hugging_face_model_id,
                 word_level_timings,
-                extract_speech
+                extract_speech,
+                error_message,
+                progress,
+                time_ended,
+                time_started
             ) VALUES (
                 :id,
+                :title,  -- Added
                 :export_formats,
                 :file,
                 :output_folder,
@@ -148,7 +179,11 @@ class TranscriptionDAO(DAO[Transcription]):
                 :whisper_model_size,
                 :hugging_face_model_id,
                 :word_level_timings,
-                :extract_speech
+                :extract_speech,
+                :error_message,
+                :progress,
+                :time_ended,
+                :time_started
             )
             """
         )
@@ -166,7 +201,7 @@ class TranscriptionDAO(DAO[Transcription]):
             UPDATE transcription
             SET status = :status, time_started = :time_started
             WHERE id = :id
-        """
+            """
         )
 
         query.bindValue(":id", str(id))
@@ -182,7 +217,7 @@ class TranscriptionDAO(DAO[Transcription]):
             UPDATE transcription
             SET status = :status, time_ended = :time_ended, error_message = :error_message
             WHERE id = :id
-        """
+            """
         )
 
         query.bindValue(":id", str(id))
@@ -199,7 +234,7 @@ class TranscriptionDAO(DAO[Transcription]):
             UPDATE transcription
             SET status = :status, time_ended = :time_ended
             WHERE id = :id
-        """
+            """
         )
 
         query.bindValue(":id", str(id))
@@ -215,7 +250,7 @@ class TranscriptionDAO(DAO[Transcription]):
             UPDATE transcription
             SET status = :status, progress = :progress
             WHERE id = :id
-        """
+            """
         )
 
         query.bindValue(":id", str(id))
@@ -231,7 +266,7 @@ class TranscriptionDAO(DAO[Transcription]):
             UPDATE transcription
             SET status = :status, time_ended = :time_ended
             WHERE id = :id
-        """
+            """
         )
 
         query.bindValue(":id", str(id))
